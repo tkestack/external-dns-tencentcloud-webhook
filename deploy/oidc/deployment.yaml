@@ -1,0 +1,62 @@
+# Override the ServiceAccount with OIDC annotations.
+# Apply this AFTER deploy/rbac.yaml to patch the ServiceAccount.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-dns
+  namespace: external-dns
+  annotations:
+    tke.cloud.tencent.com/role-arn: "qcs::cam::uin/100000000:roleName/external-dns-role"  # TODO: replace
+    tke.cloud.tencent.com/audience: "sts.cloud.tencent.com"
+    tke.cloud.tencent.com/token-expiration: "86400"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns
+  namespace: external-dns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: external-dns
+  template:
+    metadata:
+      labels:
+        app: external-dns
+    spec:
+      serviceAccountName: external-dns
+      containers:
+      - name: external-dns
+        image: registry.k8s.io/external-dns/external-dns:v0.21.0
+        args:
+        - --source=service
+        - --source=ingress
+        - --provider=webhook
+        - --webhook-provider-url=http://localhost:8888
+        - --domain-filter=example.com    # TODO: replace with your domain
+        - --txt-owner-id=my-cluster      # TODO: replace with a unique id
+        - --policy=sync
+      - name: tencentcloud-webhook
+        image: <your-registry>/external-dns-tencentcloud-webhook:latest  # TODO: replace
+        args:
+        - --credential-mode=oidc
+        - --zone-type=public             # or "private"
+        - --domain-filter=example.com    # should match external-dns
+        # - --vpc-id=vpc-xxxxxxxx        # required for private zone
+        # No SecretId/SecretKey needed — pod-identity-webhook injects credentials
+        ports:
+        - containerPort: 8888
+          name: provider
+        - containerPort: 8080
+          name: health
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 10

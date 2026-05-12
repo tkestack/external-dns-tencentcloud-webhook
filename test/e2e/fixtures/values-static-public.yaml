@@ -1,0 +1,23 @@
+domainFilters:
+  - tet.com
+
+txtOwnerId: e2e-static-public
+
+provider:
+  webhook:
+    args:
+      - --zone-type=public
+      - --domain-filter=tet.com
+    env:
+      - name: TENCENTCLOUD_SECRET_ID
+        valueFrom:
+          secretKeyRef:
+            name: tencentcloud-credentials
+            key: TENCENTCLOUD_SECRET_ID
+      - name: TENCENTCLOUD_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: tencentcloud-credentials
+            key: TENCENTCLOUD_SECRET_KEY
+      - name: TENCENTCLOUD_REGION
+        value: "ap-guangzhou"

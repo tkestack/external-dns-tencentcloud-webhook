@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns
+  namespace: external-dns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: external-dns
+  template:
+    metadata:
+      labels:
+        app: external-dns
+    spec:
+      serviceAccountName: external-dns
+      containers:
+      - name: external-dns
+        image: registry.k8s.io/external-dns/external-dns:v0.21.0
+        args:
+        - --source=service
+        - --source=ingress
+        - --provider=webhook
+        - --webhook-provider-url=http://localhost:8888
+        - --domain-filter=example.com    # TODO: replace with your domain
+        - --txt-owner-id=my-cluster      # TODO: replace with a unique id
+        - --policy=sync
+      - name: tencentcloud-webhook
+        image: <your-registry>/external-dns-tencentcloud-webhook:latest  # TODO: replace
+        args:
+        - --zone-type=public             # or "private"
+        - --domain-filter=example.com    # should match external-dns
+        # - --vpc-id=vpc-xxxxxxxx        # required for private zone
+        env:
+        - name: TENCENTCLOUD_SECRET_ID
+          valueFrom:
+            secretKeyRef:
+              name: tencentcloud-credentials
+              key: TENCENTCLOUD_SECRET_ID
+        - name: TENCENTCLOUD_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: tencentcloud-credentials
+              key: TENCENTCLOUD_SECRET_KEY
+        - name: TENCENTCLOUD_REGION
+          value: "ap-guangzhou"           # TODO: replace with your region
+        ports:
+        - containerPort: 8888
+          name: provider
+        - containerPort: 8080
+          name: health
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 5

@@ -1,0 +1,12 @@
+# Example: LoadBalancer Service with external-dns annotation
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-${ZONE_TYPE}
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: example.${DOMAIN}
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80

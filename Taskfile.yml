@@ -1,0 +1,247 @@
+version: 3
+
+set: [nounset, errexit, pipefail]
+
+vars:
+  # ── Constants ────────────────────────────────────────
+  NAME: external-dns-tencentcloud-webhook
+  REGISTRY_PREFIX: ccr.ccs.tencentyun.com/paas
+  NAMESPACE: external-dns
+  HELM_REPO: external-dns
+  HELM_CHART: external-dns/external-dns
+
+  # ── Input (override via CLI: task deploy ZONE_TYPE=private) ──
+  ZONE_TYPE: '{{default "" .ZONE_TYPE}}'
+  AUTH: '{{default "oidc" .AUTH}}'
+  DOMAIN: '{{default "" .DOMAIN}}'
+  TAG: '{{default .VERSION .TAG}}'
+
+  # ── Auto-detected ───────────────────────────────────
+  VERSION:
+    sh: 'git describe --always --tags --dirty 2>/dev/null || echo "dev"'
+  _IMAGE: '{{.REGISTRY_PREFIX}}/{{.NAME}}'
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  # ════════════════════════════════════════════════════════
+  #  Commands
+  # ════════════════════════════════════════════════════════
+
+  setup:
+    desc: 'Generate values file for {{.ZONE_TYPE}} zone (AUTH={{.AUTH}})'
+    preconditions:
+      - sh: '[ -n "{{.ZONE_TYPE}}" ]'
+        msg: "ZONE_TYPE is required. Usage: task setup ZONE_TYPE=public DOMAIN=example.com"
+    cmds:
+      - OUTPUT_DIR=deploy/helm NAMESPACE={{.NAMESPACE}} ./scripts/setup.sh --auth {{.AUTH}} --zone {{.ZONE_TYPE}} {{if .DOMAIN}}--domain {{.DOMAIN}}{{end}}
+
+  deploy:
+    desc: 'Deploy external-dns (all zones or specific ZONE_TYPE)'
+    cmds:
+      - helm repo add {{.HELM_REPO}} https://kubernetes-sigs.github.io/external-dns/ 2>/dev/null || true
+      - helm repo update {{.HELM_REPO}}
+      - |
+        {{if .ZONE_TYPE}}
+        # Deploy specific zone
+        VALUES="deploy/helm/values-{{.ZONE_TYPE}}.local.yaml"
+        if [ ! -f "$VALUES" ]; then
+          echo "Error: $VALUES not found. Run: task setup ZONE_TYPE={{.ZONE_TYPE}} DOMAIN=<domain>"
+          exit 1
+        fi
+        RELEASE="external-dns-{{.ZONE_TYPE}}"
+        echo "==> Deploying $RELEASE"
+        helm upgrade --install "$RELEASE" {{.HELM_CHART}} \
+          --namespace {{.NAMESPACE}} --create-namespace \
+          -f deploy/helm/values-base.yaml \
+          -f deploy/helm/values-china.yaml \
+          -f "$VALUES" \
+          --set provider.webhook.image.repository={{._IMAGE}} \
+          --set provider.webhook.image.tag=latest \
+          --set provider.webhook.image.pullPolicy=Always
+        echo "Waiting for pod ready..."
+        kubectl wait -n {{.NAMESPACE}} --for=condition=Ready pod \
+          -l app.kubernetes.io/instance="$RELEASE" --timeout=60s 2>/dev/null || true
+        kubectl get pods -n {{.NAMESPACE}} -l app.kubernetes.io/instance="$RELEASE"
+        {{else}}
+        # Deploy all zones with existing values files
+        DEPLOYED=0
+        for zone in public private; do
+          VALUES="deploy/helm/values-${zone}.local.yaml"
+          if [ -f "$VALUES" ]; then
+            RELEASE="external-dns-${zone}"
+            echo "==> Deploying $RELEASE"
+            helm upgrade --install "$RELEASE" {{.HELM_CHART}} \
+              --namespace {{.NAMESPACE}} --create-namespace \
+              -f deploy/helm/values-base.yaml \
+              -f deploy/helm/values-china.yaml \
+              -f "$VALUES" \
+              --set provider.webhook.image.repository={{._IMAGE}} \
+              --set provider.webhook.image.tag=latest \
+              --set provider.webhook.image.pullPolicy=Always
+            kubectl wait -n {{.NAMESPACE}} --for=condition=Ready pod \
+              -l app.kubernetes.io/instance="$RELEASE" --timeout=60s 2>/dev/null || true
+            DEPLOYED=$((DEPLOYED+1))
+          fi
+        done
+        if [ "$DEPLOYED" = "0" ]; then
+          echo "No values files found. Run: task setup ZONE_TYPE=public DOMAIN=<domain>"
+          exit 1
+        fi
+        echo ""
+        kubectl get pods -n {{.NAMESPACE}}
+        {{end}}
+
+  down:
+    desc: 'Uninstall and clean up'
+    cmds:
+      - |
+        {{if .ZONE_TYPE}}
+        RELEASE="external-dns-{{.ZONE_TYPE}}"
+        helm uninstall "$RELEASE" -n {{.NAMESPACE}} 2>/dev/null || echo "$RELEASE not found"
+        rm -f "deploy/helm/values-{{.ZONE_TYPE}}.local.yaml"
+        {{else}}
+        for zone in public private; do
+          RELEASE="external-dns-${zone}"
+          helm uninstall "$RELEASE" -n {{.NAMESPACE}} 2>/dev/null || true
+          rm -f "deploy/helm/values-${zone}.local.yaml"
+        done
+        {{end}}
+        REMAINING=$(helm list -n {{.NAMESPACE}} --filter 'external-dns' -q 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$REMAINING" = "0" ]; then
+          kubectl delete ns {{.NAMESPACE}} --ignore-not-found
+        fi
+
+  status:
+    desc: Show all external-dns instances
+    cmds:
+      - helm list -n {{.NAMESPACE}} --filter 'external-dns' 2>/dev/null || true
+      - echo ""
+      - kubectl get deploy,pods -n {{.NAMESPACE}} -o wide 2>/dev/null || echo "namespace {{.NAMESPACE}} does not exist"
+
+  logs:
+    desc: 'Show webhook logs (ZONE_TYPE=public|private, default: public)'
+    cmds:
+      - kubectl logs -n {{.NAMESPACE}} -l app.kubernetes.io/instance=external-dns-{{or .ZONE_TYPE "public"}} -c webhook --tail=50 {{.CLI_ARGS}}
+
+  logs:dns:
+    desc: 'Show external-dns logs'
+    cmds:
+      - kubectl logs -n {{.NAMESPACE}} -l app.kubernetes.io/instance=external-dns-{{or .ZONE_TYPE "public"}} -c external-dns --tail=50 {{.CLI_ARGS}}
+
+  # ════════════════════════════════════════════════════════
+  #  Developer commands
+  # ════════════════════════════════════════════════════════
+
+  build:
+    desc: Build and push dev image (latest)
+    cmds:
+      - |
+        VERSION={{.VERSION}} \
+        COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+        BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+        KO_DOCKER_REPO={{._IMAGE}} \
+        ko build --bare \
+          --tags latest,{{.VERSION}} \
+          --platform=linux/amd64 \
+          --sbom=none .
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+      - .ko.yaml
+
+  examples:
+    desc: 'Deploy example Services for validation'
+    cmds:
+      - |
+        for zone in public private; do
+          RELEASE="external-dns-${zone}"
+          DOMAIN=$(kubectl -n {{.NAMESPACE}} get deploy "$RELEASE" \
+            -o jsonpath='{.spec.template.spec.containers[?(@.name=="webhook")].args}' \
+            2>/dev/null | tr ',' '\n' | sed -n "s/.*--domain-filter=\([^ \"]*\).*/\1/p" | head -1)
+          if [ -n "$DOMAIN" ]; then
+            echo "==> ${zone}: deploying examples (domain: ${DOMAIN})"
+            export DOMAIN ZONE_TYPE="$zone"
+            for f in examples/*.yaml; do
+              envsubst < "$f" | kubectl apply -n default -f -
+            done
+          fi
+        done
+        echo ""
+        echo "Wait ~1m for sync, then check: task logs"
+
+  examples:clean:
+    desc: 'Remove example resources'
+    cmds:
+      - |
+        for zone in public private; do
+          kubectl delete svc "example-${zone}" "example-multi-${zone}" -n default --ignore-not-found 2>/dev/null
+          kubectl delete ingress "example-ingress-${zone}" -n default --ignore-not-found 2>/dev/null
+        done
+
+  test:e2e:
+    desc: 'Run e2e acceptance tests (requires cluster connection)'
+    cmds:
+      - |
+        ginkgo -v ./test/e2e/ -- --domain={{.DOMAIN}} --image-tag={{.IMAGE_TAG}} {{.CLI_ARGS}}
+    vars:
+      DOMAIN: '{{default "tet.com" .DOMAIN}}'
+      IMAGE_TAG: '{{default "latest" .IMAGE_TAG}}'
+
+  release:
+    desc: 'Build, tag, push and publish release (TAG={{.TAG}})'
+    preconditions:
+      - sh: '[ "{{.TAG}}" != "dev" ]'
+        msg: "TAG is required. Usage: task release TAG=v0.1.0"
+      - sh: 'echo "{{.TAG}}" | grep -qE "^v[0-9]+\.[0-9]+\.[0-9]+$"'
+        msg: "TAG must be semver format: v0.1.0"
+      - sh: 'git diff --quiet && git diff --cached --quiet'
+        msg: "Working tree is dirty. Commit or stash changes first."
+    cmds:
+      # 1. Update image tag in values files
+      - "sed -i '' 's|^      tag:.*|      tag: {{.TAG}}|' deploy/helm/values-base.yaml"
+      - "sed -i '' 's|^      tag:.*|      tag: {{.TAG}}|' deploy/helm/values-china.yaml"
+      # 2. Commit version bump (CHANGELOG should already be updated by /release command)
+      - git add deploy/helm/values-base.yaml deploy/helm/values-china.yaml CHANGELOG.md
+      - 'git diff --cached --quiet || git commit -m "chore(release): {{.TAG}}"'
+      # 3. Tag (delete old if exists)
+      - git tag -d {{.TAG}} 2>/dev/null || true
+      - git tag {{.TAG}}
+      # 4. Build and push image (GHCR + CCR)
+      - |
+        VERSION={{.TAG}} \
+        COMMIT=$(git rev-parse --short HEAD) \
+        BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+        KO_DOCKER_REPO=ghcr.io/tkestack/external-dns-tencentcloud-webhook \
+        ko build --bare \
+          --tags {{.TAG}},latest \
+          --platform=linux/amd64 \
+          --sbom=none .
+      - |
+        VERSION={{.TAG}} \
+        COMMIT=$(git rev-parse --short HEAD) \
+        BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+        KO_DOCKER_REPO=ccr.ccs.tencentyun.com/paas/external-dns-tencentcloud-webhook \
+        ko build --bare \
+          --tags {{.TAG}},latest \
+          --platform=linux/amd64 \
+          --sbom=none .
+      # 5. Push code and tag
+      - git push origin master --force-with-lease
+      - git push origin {{.TAG}} --force
+      # 6. Create GitHub release (delete old if exists, reads CHANGELOG for notes)
+      - |
+        gh release delete {{.TAG}} -y 2>/dev/null || true
+        VER={{.TAG}}
+        VER_NUM=${VER#v}
+        NOTES=$(awk "/^## \[${VER_NUM}\]/{found=1;next} /^## \[/{found=0} found" CHANGELOG.md)
+        if [ -z "$NOTES" ]; then
+          NOTES="Release {{.TAG}}"
+        fi
+        echo "$NOTES" | gh release create {{.TAG}} --title "{{.TAG}}" --notes-file -
+      - 'echo ""'
+      - 'echo "Done: {{._IMAGE}}:{{.TAG}}"'

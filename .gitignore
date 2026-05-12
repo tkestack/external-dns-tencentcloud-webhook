@@ -1,0 +1,5 @@
+# Generated values (contain credentials)
+*.local.yaml
+
+# Build output
+/external-dns-tencentcloud-webhook

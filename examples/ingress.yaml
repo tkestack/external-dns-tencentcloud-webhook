@@ -1,0 +1,20 @@
+# Example: Ingress with external-dns annotation
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: example-ingress-${ZONE_TYPE}
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: app.${DOMAIN}
+spec:
+  rules:
+    - host: app.${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: example-${ZONE_TYPE}
+                port:
+                  number: 80

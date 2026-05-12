@@ -1,0 +1,12 @@
+# Example: Service with multiple hostnames (comma-separated)
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-multi-${ZONE_TYPE}
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: api.${DOMAIN},web.${DOMAIN}
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80

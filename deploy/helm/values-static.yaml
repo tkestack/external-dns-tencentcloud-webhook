@@ -1,0 +1,29 @@
+# deploy/helm/values-static.yaml
+# Static credentials 认证模式叠加配置
+#
+# 前置: 创建 Secret
+#   kubectl -n external-dns create secret generic tencentcloud-credentials \
+#     --from-literal=TENCENTCLOUD_SECRET_ID=<ID> \
+#     --from-literal=TENCENTCLOUD_SECRET_KEY=<KEY>
+#
+# 必须通过 --set 提供:
+#   --set domainFilters[0]=<DOMAIN>
+#   --set txtOwnerId=<OWNER_ID>
+#   --set provider.webhook.args[0]=--zone-type=<ZONE_TYPE>
+#   --set provider.webhook.args[1]=--domain-filter=<DOMAIN>
+
+provider:
+  webhook:
+    env:
+      - name: TENCENTCLOUD_SECRET_ID
+        valueFrom:
+          secretKeyRef:
+            name: tencentcloud-credentials
+            key: TENCENTCLOUD_SECRET_ID
+      - name: TENCENTCLOUD_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: tencentcloud-credentials
+            key: TENCENTCLOUD_SECRET_KEY
+      - name: TENCENTCLOUD_REGION
+        value: "ap-guangzhou"

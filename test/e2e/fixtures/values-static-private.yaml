@@ -1,0 +1,29 @@
+# Static credential mode - private zone test fixture.
+# NOTE: domain and vpc-id are cluster-specific. Update when testing on a different cluster.
+domainFilters:
+  - cls-ony24s9n.local
+
+txtOwnerId: e2e-static-private
+
+extraArgs:
+  - --publish-internal-services
+
+provider:
+  webhook:
+    args:
+      - --zone-type=private
+      - --domain-filter=cls-ony24s9n.local
+      - --vpc-id=vpc-9lwri7nc
+    env:
+      - name: TENCENTCLOUD_SECRET_ID
+        valueFrom:
+          secretKeyRef:
+            name: tencentcloud-credentials
+            key: TENCENTCLOUD_SECRET_ID
+      - name: TENCENTCLOUD_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: tencentcloud-credentials
+            key: TENCENTCLOUD_SECRET_KEY
+      - name: TENCENTCLOUD_REGION
+        value: "ap-chengdu"

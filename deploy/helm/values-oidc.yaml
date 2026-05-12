@@ -1,0 +1,15 @@
+# deploy/helm/values-oidc.yaml
+# OIDC (TKE RRSA) 认证模式叠加配置
+#
+# 必须通过 --set 提供:
+#   --set serviceAccount.annotations."tke\.cloud\.tencent\.com/role-arn"=<ROLE_ARN>
+#   --set domainFilters[0]=<DOMAIN>
+#   --set txtOwnerId=<OWNER_ID>
+#   --set provider.webhook.args[0]=--credential-mode=oidc
+#   --set provider.webhook.args[1]=--zone-type=<ZONE_TYPE>
+#   --set provider.webhook.args[2]=--domain-filter=<DOMAIN>
+
+serviceAccount:
+  annotations:
+    tke.cloud.tencent.com/audience: "sts.cloud.tencent.com"
+    tke.cloud.tencent.com/token-expiration: "86400"

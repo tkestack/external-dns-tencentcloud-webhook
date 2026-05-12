@@ -1,0 +1,18 @@
+# deploy/helm/values-china.yaml
+# Override image repositories for China mainland (CCR mirrors).
+# registry.k8s.io is not accessible in China; use CCR-hosted mirrors.
+#
+# Usage:
+#   helm install ... -f values-base.yaml -f values-china.yaml -f <your-values.yaml>
+
+# external-dns main container (mirrored from registry.k8s.io)
+image:
+  repository: ccr.ccs.tencentyun.com/tkeimages/external-dns
+  tag: v0.21.0
+
+# tencentcloud-webhook sidecar (CCR mirror)
+provider:
+  webhook:
+    image:
+      repository: ccr.ccs.tencentyun.com/tkeimages/external-dns-tencentcloud-webhook
+      tag: v0.1.0

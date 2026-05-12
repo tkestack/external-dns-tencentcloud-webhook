@@ -1,0 +1,39 @@
+# deploy/helm/values-base.yaml
+# Shared preset values for external-dns with tencentcloud-webhook.
+# Uses globally-accessible images by default (GHCR + registry.k8s.io).
+# For China mainland, add: -f values-china.yaml
+#
+# Usage:
+#   helm install ... -f values-base.yaml -f <your-values.yaml>
+
+# Kubernetes resources to watch for DNS entries
+sources:
+  - service
+  - ingress
+
+# How DNS records are synchronized: create-only | sync | upsert-only
+policy: sync
+
+# Webhook provider configuration
+provider:
+  name: webhook
+  webhook:
+    # tencentcloud-webhook sidecar image
+    image:
+      repository: ghcr.io/tkestack/external-dns-tencentcloud-webhook
+      tag: v0.1.0
+    # Health probes (webhook serves /healthz on port 8080)
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 8080
+      initialDelaySeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: 8080
+      initialDelaySeconds: 10
+
+# Connect external-dns to the webhook sidecar (default: http://localhost:8888)
+# extraArgs:
+#   - --webhook-provider-url=http://localhost:8888
